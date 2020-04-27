@@ -4,6 +4,7 @@ SCRIPT_PATH="$(dirname "$(readlink -f "$0")")"
 SCRIPT_NAME="$(basename "$0")"
 CONFIG_FILE="${SCRIPT_PATH}/portstats.conf"
 RUN_LOG="${SCRIPT_PATH}/portstats.log"
+[ -x "$(command -v numfmt)" ] && FMT="numfmt" ||FMT="pretty_print"
 declare -r TRUE=0
 declare -r FALSE=1
 declare -a mon_ports
@@ -61,15 +62,31 @@ del_cron()
 check_ports()
 {
   [ -z "$1" ] && return ${FALSE}
-  read -ra ports <<< "$1" 
+  read -ra ports <<< "$1"
   isuniq=$(echo "$1"|tr ' '  '\n' | sort -n | uniq -d)
-  [ -n "$isuniq" ] && echo -n "Warning:duplicate ports!" && return ${FALSE} 
+  [ -n "$isuniq" ] && echo -n "Warning:duplicate ports!" && return ${FALSE}
   for port in "${ports[@]}"; do
     [[ ! "${port}" =~ ^([0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4] \
        [0-9]{2}|655[0-2][0-9]|6553[0-5])$ ]] \
        && echo -n "Warning:Incorrect port format!" && return ${FALSE}
   done
   return ${TRUE}
+}
+
+pretty_print()
+{
+  B="$1"
+  while :; do
+    [ $B -lt 1024 ] && printf "${B}B" && break
+    KB=$(((B+512)/1024))
+    [ $KB -lt 1024 ] && printf "${KB}K" && break
+    MB=$(((KB+512)/1024))
+    [ $MB -lt 1024 ] && printf "${MB}M" && break
+    GB=$(((MB+512)/1024))
+    [ $GB -lt 1024 ] && printf "${GB}G" && break
+    printf "$(((GB+512)/1024))T"
+    break
+  done
 }
 read_config()
 {
@@ -124,9 +141,9 @@ reset_ports_traffic()
   $IPT -Z
 }
 run()
-{ 
+{
   today="$(date "+%Y-%m-%d")"
-  monthlylog="${log_folder}/$(date "+%Y-%m")-sum.log" 
+  monthlylog="${log_folder}/$(date "+%Y-%m")-sum.log"
   today_log="${log_folder}/${today}.log"
   now="$(date "+%T")"
   echo "${now}: portstats started" >> "${RUN_LOG}"
@@ -146,7 +163,7 @@ run()
   mapfile -t old_ports <<< "${sort_ports}"
   check_ports_change
   if  [[ "${is_ports_change}" != 0 ]]; then
-    echo -n "${now}: port changed:" >> "${RUN_LOG}" 
+    echo -n "${now}: port changed:" >> "${RUN_LOG}"
     echo "From ports=${old_ports[*]} to ${mon_ports[*]}" \
           >> "${RUN_LOG}"
     if [[ ! -f "${today_log}" ]] ; then
@@ -165,11 +182,11 @@ run()
   fi
 }
 hourly_stats()
-{ 
+{
   read -ra stat_ports <<< "$1"
   dailylog="$2"
   traffic="$($IPT -L -nvx)"
-  for port in "${stat_ports[@]}"; do 
+  for port in "${stat_ports[@]}"; do
     last_input=$(grep "^[0-1][0-9]:.*\b$port\b" "$dailylog"|
                 awk 'END {print $5}')
     [ ! "${last_input}" ] && last_input=0
@@ -180,8 +197,10 @@ hourly_stats()
     total_output=$(echo "${traffic}"|grep -w "spt:$port"|awk '{print $2}')
     input_byte="$(( total_input - last_input ))"
     output_byte="$(( total_output - last_output ))"
-    input="$(echo "$input_byte"|numfmt --to=si)"
-    output="$(echo "$output_byte"|numfmt --to=si)"
+    [ "${input_byte}" -gt 0 ] && input="$("$FMT" "$input_byte" "--to=si")" \
+                                 || input="0B"
+    [ "${output_byte}" -gt 0 ] && output="$("$FMT" "$output_byte" "--to=si" )"\
+                                 || output="0B"
     printf "%8s %5s %8s %8s %10s %10s %10s %10s\n" "${now}" "${port}" \
            "${input}" "${output}" "${total_input}" "${total_output}"  \
            "${input_byte}" "${output_byte}" >> "${dailylog}"
@@ -203,15 +222,15 @@ new_daily_stats()
 daily_sum()
 {
   allports="$(awk '/[0-2][0-9]:/ {print $2}' "${yesterday_log}"|sort -un)"
-  mapfile -t ports <<< "${allports}" 
-  i=0 
+  mapfile -t ports <<< "${allports}"
+  i=0
   for port in "${ports[@]}"; do
     inBytes[i]=$(grep -w "$port" "$yesterday_log"|
                 awk '/[0-9][0-9]:/ {sum += $7};END {print sum}')
     outBytes[i]=$(grep -w "$port" "$yesterday_log"|
                 awk '/[0-9][0-9]:/ {sum += $8};END {print sum}')
-    input=$(echo "${inBytes[i]}"|numfmt --to=si)
-    output=$(echo "${outBytes[i]}"|numfmt --to=si)
+    input="$("$FMT"  "${inBytes[i]}" "--to=si")"
+    output="$("$FMT" "${outBytes[i]}" "--to=si" )"
     printf "%-8s %5s %8s %8s %10s %10s\n" "Total" "${port}" "${input}" \
             "${output}" "${inBytes[i]}" "${outBytes[i]}" >> "${yesterday_log}"
     ((i++))
@@ -222,7 +241,7 @@ add_monthly_stats()
 {
   read -ar ports <<< "$1"
   read -ar inBytes <<< "$2"
-  read -ar outBytes <<< "$3" 
+  read -ar outBytes <<< "$3"
   if [ ! -f "${monthlylog}" ]; then
     printf "%10s %5s %8s %8s %10s %10s\n" "Date" "Port" "Input" "Output" \
                   "inBytes" "outBytes" > "${monthlylog}"
@@ -233,15 +252,15 @@ add_monthly_stats()
   fi
   i=0
   for port in "${ports[@]}"; do
-    input=$(echo "${inBytes[i]}"|numfmt --to=si)
-    output=$(echo "${outBytes[i]}"|numfmt --to=si)
+    input="$("$FMT" "${inBytes[i]}"  "--to=si")"
+    output="$("$FMT" "${outBytes[i]}"  "--to=si")"
     printf "%-10s %5s %8s %8s %10s %10s\n" "${yesterday}" "${port}" "${input}"  \
             "${output}" "${inBytes[i]}" "${outBytes[i]}" >> "${monthlylog}"
     ((i++))
   done
 }
 monthly_sum()
-{ 
+{
   allports="$(awk '/[0-9]{4}-/ {print $2}' "${last_month_log}"|sort -un )"
   mapfile -t ports <<< "${allports}"
   i=0
@@ -250,8 +269,8 @@ monthly_sum()
                 awk '/[0-9]{4}-/  {sum += $5};END {print sum}')
     outBytes[i]=$(grep -w "$port" "$last_month_log"|
                 awk '/[0-9]{4}-/  {sum += $6};END {print sum}')
-    input=$(echo "${inBytes[i]}"|numfmt --to=si)
-    output=$(echo "${outBytes[i]}"|numfmt --to=si)
+    input="$("$FMT" "${inBytes[i]}"  "--to=si")"
+    output="$("$FMT" "${outBytes[i]}"  "--to=si")"
     printf "%-10s %5s %8s %8s %10s %10s\n" "Total" "${port}" "${input}" \
             "${output}" "${inBytes[i]}" "${outBytes[i]}" >> "${last_month_log}"
     ((i++))

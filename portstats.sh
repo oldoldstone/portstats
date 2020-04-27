@@ -78,7 +78,7 @@ function read_config()
     ports_list=$(cat $CONFIG_FILE|awk -F= '/^ports=/ {print $2}')
     log_folder=$(cat $CONFIG_FILE|awk -F= '/^log_folder=/ {print $2}')
   else
-    echo Warning: There is no config file, please reinstall
+    echo Error: There is no config file, please install first!
     exit 1
   fi
 }
@@ -258,14 +258,16 @@ function monthly_sum()
 }
 is_root(){
  # root user has user id (UID) zero.
- [ $(id -u) -eq 0 ] && return $TRUE || return $FALSE
+ [ $(id -u) -eq 0 ] && echo 1 ||  echo 0
 }
 function main()
-{
-  is_root|| echo "Error:You need to run this script as a root user."
+{   
+  if [ ! $(is_root) ]; then
+    echo "Error:You need to run this script as a root user." && exit
+  fi
   action="$1"
   case "${action}" in
-    install)
+    install)      
       add_iptable_chains
       add_cron
       setup_config

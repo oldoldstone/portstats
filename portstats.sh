@@ -297,6 +297,7 @@ main()
       setup_config
       ;;
     run)
+      add_iptable_chains
       read_config
       run
       ;;

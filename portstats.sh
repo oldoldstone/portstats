@@ -77,14 +77,14 @@ pretty_print()
 {
   B="$1"
   while :; do
-    [ $B -lt 1024 ] && printf "${B}B" && break
+    [ "$B" -lt 1024 ] && echo "${B}B"  && break
     KB=$(((B+512)/1024))
-    [ $KB -lt 1024 ] && printf "${KB}K" && break
+    [ "$KB" -lt 1024 ] && echo "${KB}K" && break
     MB=$(((KB+512)/1024))
-    [ $MB -lt 1024 ] && printf "${MB}M" && break
+    [ "$MB" -lt 1024 ] && echo "${MB}M" && break
     GB=$(((MB+512)/1024))
-    [ $GB -lt 1024 ] && printf "${GB}G" && break
-    printf "$(((GB+512)/1024))T"
+    [ "$GB" -lt 1024 ] && echo "${GB}G" && break
+    echo "$(((GB+512)/1024))T"
     break
   done
 }
@@ -197,10 +197,10 @@ hourly_stats()
     total_output=$(echo "${traffic}"|grep -w "spt:$port"|awk '{print $2}')
     input_byte="$(( total_input - last_input ))"
     output_byte="$(( total_output - last_output ))"
-    [ "${input_byte}" -gt 0 ] && input="$("$FMT" "$input_byte" "--to=si")" \
-                                 || input="0B"
-    [ "${output_byte}" -gt 0 ] && output="$("$FMT" "$output_byte" "--to=si" )"\
-                                 || output="0B"
+    [ "${input_byte}" -lt 0 ] && input_byte=0
+    [ "${output_byte}" -lt 0 ] && output_byte=0
+    input="$("$FMT" "$input_byte" "--to=si")"
+    output="$("$FMT" "$output_byte" "--to=si" )"
     printf "%8s %5s %8s %8s %10s %10s %10s %10s\n" "${now}" "${port}" \
            "${input}" "${output}" "${total_input}" "${total_output}"  \
            "${input_byte}" "${output_byte}" >> "${dailylog}"
@@ -242,22 +242,30 @@ add_monthly_stats()
   read -ar ports <<< "$1"
   read -ar inBytes <<< "$2"
   read -ar outBytes <<< "$3"
-  if [ ! -f "${monthlylog}" ]; then
-    printf "%10s %5s %8s %8s %10s %10s\n" "Date" "Port" "Input" "Output" \
-                  "inBytes" "outBytes" > "${monthlylog}"
-
-    last_month="$(date --date="$(date +%Y-%m-15) -1 month" "+%Y-%m")"
-    last_month_log="${log_folder}/${last_month}-sum.log"
-    [[ -f "${last_month_log}" ]] && monthly_sum
-  fi
   i=0
+  sum_str=""
   for port in "${ports[@]}"; do
     input="$("$FMT" "${inBytes[i]}"  "--to=si")"
     output="$("$FMT" "${outBytes[i]}"  "--to=si")"
-    printf "%-10s %5s %8s %8s %10s %10s\n" "${yesterday}" "${port}" "${input}"  \
-            "${output}" "${inBytes[i]}" "${outBytes[i]}" >> "${monthlylog}"
+    printf -v tmpstr "%-10s %5s %8s %8s %10s %10s\n" "${yesterday}" "${port}" \
+            "${input}" "${output}" "${inBytes[i]}" "${outBytes[i]}"
+    sum_str="${sum_str}${tmpstr}"
     ((i++))
   done
+
+  last_month="$(date --date="$(date +%Y-%m-15) -1 month" "+%Y-%m")"
+  last_month_log="${log_folder}/${last_month}-sum.log"
+  day="$(date "+%d")"
+  if [ ! -f "${monthlylog}" ]; then
+    printf "%10s %5s %8s %8s %10s %10s\n" "Date" "Port" "Input" "Output" \
+                  "inBytes" "outBytes" > "${monthlylog}"
+    if [ -f "${last_month_log}" ] && [ "$day" == "01" ] ; then
+      echo "$sum_str" >> "${last_month_log}" # new month
+    fi
+    monthly_sum
+  else
+    echo "$sum_str" >> "${monthlylog}"
+  fi
 }
 monthly_sum()
 {
